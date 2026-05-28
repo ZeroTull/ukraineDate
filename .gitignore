@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# generated data bundle (produced by `node etl.mjs build`)
+model.json
+
+# build output
+dist/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.log
