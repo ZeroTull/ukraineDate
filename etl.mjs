@@ -25,22 +25,13 @@
    https://stat.gov.ua/en/development-api/step-by-step-example
    ===================================================================== */
 
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { XMLParser } from "fast-xml-parser";
+import { cacheRead as _cacheRead, cacheWrite as _cacheWrite, decodeSdmxJson } from "./src/etl-core.js";
 
-/* ---- Disk cache for raw API responses ----
-   Saves each successful data fetch to .etl-cache/<DF_ID>.json so that
-   `build` can re-use the last good response when the API is unavailable. */
 const CACHE_DIR = ".etl-cache";
-function cacheRead(dfId) {
-  const p = `${CACHE_DIR}/${dfId}.json`;
-  if (existsSync(p)) return JSON.parse(readFileSync(p, "utf8"));
-  return null;
-}
-function cacheWrite(dfId, data) {
-  mkdirSync(CACHE_DIR, { recursive: true });
-  writeFileSync(`${CACHE_DIR}/${dfId}.json`, JSON.stringify(data));
-}
+const cacheRead  = (id)       => _cacheRead(CACHE_DIR, id);
+const cacheWrite = (id, data) => _cacheWrite(CACHE_DIR, id, data);
 
 /* ----------------------------- CONFIG ----------------------------- */
 
@@ -184,27 +175,7 @@ async function fetchObservationsSdmxJson(cfg, retries = 3) {
     }
   }
 
-  // Build dimension index -> code lookup from embedded structure
-  const seriesDims = data.structure?.dimensions?.series ?? [];
-  const obsDims    = data.structure?.dimensions?.observation ?? [];
-  const dimValues  = seriesDims.map((d) => ({ id: d.id, values: (d.values ?? []).map((v) => v.id ?? String(v)) }));
-  const timeDim    = obsDims[0];
-  const timeValues = (timeDim?.values ?? []).map((v) => v.id ?? String(v));
-
-  const out = [];
-  for (const ds of data.dataSets ?? []) {
-    for (const [seriesKey, series] of Object.entries(ds.series ?? {})) {
-      const keyParts = seriesKey.split(":").map(Number);
-      const key = {};
-      for (let i = 0; i < dimValues.length; i++) {
-        key[dimValues[i].id] = dimValues[i].values[keyParts[i]] ?? String(keyParts[i]);
-      }
-      for (const [obsIdx, obsArr] of Object.entries(series.observations ?? {})) {
-        out.push({ key, time: timeValues[Number(obsIdx)] ?? obsIdx, value: Number(obsArr[0]) });
-      }
-    }
-  }
-  return out;
+  return decodeSdmxJson(data);
 }
 
 /* ------------------------- command: list --------------------------- */
