@@ -371,22 +371,49 @@ export default function App() {
         </div>
 
         <details className="src anim" style={{ animationDelay: ".45s" }}>
-          <summary>Звідки дані та чому це лише оцінка</summary>
+          <summary>Методологія та обмеження</summary>
           <ul>
             <li>Метод: синтетична популяція ~40 000 осіб із врахуванням кореляцій (освіта↔дохід, вік↔діти, дохід↔авто), а не перемноження ймовірностей — саме тому числа реалістичніші за звичайні «калькулятори мрії».</li>
-            <li>Зріст, куріння, алкоголь — обстеження WHO STEPS (Україна, 2019).</li>
-            <li>Дохід та освіта — Держстат (SDMX API) та обстеження робочої сили.</li>
-            <li>Базова чисельність населення — груба оцінка для підконтрольної території; через війну точної цифри не існує (±15–20%).</li>
+            <li>Базова чисельність населення — груба оцінка для підконтрольної території; через відсутність перепису з 2001 р. та воєнне переміщення похибка ±15–20%.</li>
             <li>* «Не на фронті» — приблизна оцінка: офіційна військова статистика закрита.</li>
-            <li>Усі числові параметри цього прототипу — орієнтовні плейсхолдери. Фінальні значення підставимо з реальних наборів даних.</li>
           </ul>
         </details>
 
         <footer className="foot">
-          Прототип
-          {model.meta?.generatedAt
-            ? ` · дані оновлено ${new Date(model.meta.generatedAt).toLocaleDateString("uk-UA")}`
-            : " · дані будуть оновлені офіційними джерелами"}
+          <table className="foot-src">
+            <tbody>
+              <tr>
+                <td>Населення за статтю та віком</td>
+                <td>Держстат України, SDMX API (DF_POPULATION_STRUCTURE)</td>
+                <td>{model.meta?.periods?.population ?? "2022"}</td>
+              </tr>
+              <tr>
+                <td>Зарплати</td>
+                <td>Держстат, щомісячне обстеження підприємств (DF_ENTERPRISE_LABOR_STATISTICS); розподіл за статтю — квартальні дані</td>
+                <td>{model.meta?.periods?.wages ?? "—"}</td>
+              </tr>
+              <tr>
+                <td>Освіта та зайнятість</td>
+                <td>Держстат, обстеження робочої сили (DF_LABOR_FORCE_A)</td>
+                <td>{model.meta?.periods?.education ?? model.meta?.periods?.employment ?? "2021"}</td>
+              </tr>
+              <tr>
+                <td>Зріст, куріння, алкоголь</td>
+                <td>WHO STEPS, Україна</td>
+                <td>2019</td>
+              </tr>
+              <tr>
+                <td>Служба у ЗСУ</td>
+                <td>Модельна оцінка — офіційна статистика закрита</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+          {model.meta?.generatedAt && (
+            <div className="foot-gen">
+              Модель згенеровано {new Date(model.meta.generatedAt).toLocaleDateString("uk-UA")}
+            </div>
+          )}
         </footer>
       </main>
     </div>
@@ -464,7 +491,12 @@ const CSS = `
 .src ul{padding:0 0 14px;list-style:none;display:grid;gap:9px;}
 .src li{font-size:11.5px;color:var(--muted);line-height:1.55;padding-left:15px;position:relative;}
 .src li::before{content:'';position:absolute;left:0;top:6px;width:5px;height:5px;border-radius:50%;background:var(--accent);}
-.foot{text-align:center;font-size:10.5px;color:var(--muted);margin-top:22px;}
+.foot{font-size:10.5px;color:var(--muted);margin-top:22px;border-top:1px solid var(--line);padding-top:14px;}
+.foot-src{width:100%;border-collapse:collapse;}
+.foot-src td{padding:3px 8px 3px 0;vertical-align:top;line-height:1.4;}
+.foot-src td:first-child{font-weight:500;white-space:nowrap;padding-right:12px;min-width:160px;}
+.foot-src td:last-child{white-space:nowrap;text-align:right;color:var(--accent);font-variant-numeric:tabular-nums;}
+.foot-gen{margin-top:10px;text-align:right;}
 @keyframes rise{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}
 .anim{animation:rise .5s both;}
 `;

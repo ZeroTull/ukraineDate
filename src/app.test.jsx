@@ -27,15 +27,16 @@ describe("App — smoke tests (default model)", () => {
     expect(screen.getByText(/Куди зникають кандидати/i)).toBeInTheDocument();
   });
 
-  it("shows the sources details section", () => {
+  it("shows the methodology details section", () => {
     render(<App />);
-    expect(screen.getByText(/Звідки дані/i)).toBeInTheDocument();
+    expect(screen.getByText(/Методологія та обмеження/i)).toBeInTheDocument();
   });
 
-  it("shows fallback footer text when model.json is absent", () => {
+  it("shows footer sources table when model.json is absent", () => {
     vi.stubGlobal("fetch", () => Promise.resolve({ ok: false }));
     render(<App />);
-    expect(screen.getByText(/дані будуть оновлені/i)).toBeInTheDocument();
+    expect(document.querySelector(".foot-src")).toBeTruthy();
+    expect(screen.getByText(/Населення за статтю та віком/i)).toBeInTheDocument();
   });
 });
 
@@ -116,8 +117,9 @@ describe("App — model.json integration", () => {
     );
     const { container } = render(<App />);
     await act(async () => {});
-    // Footer still shows fallback text (default model in use)
-    expect(screen.getByText(/дані будуть оновлені/i)).toBeInTheDocument();
+    // Footer sources table still renders (with fallback periods), no generation date
+    expect(container.querySelector(".foot-src")).toBeTruthy();
+    expect(container.querySelector(".foot-gen")).toBeFalsy();
     // App still renders results
     expect(container.querySelector(".pct")).toBeTruthy();
   });
@@ -128,6 +130,99 @@ describe("App — model.json integration", () => {
     await act(async () => {});
     expect(container.querySelector(".pct")).toBeTruthy();
     expect(parseAbsoluteCount(container)).toBeGreaterThan(0);
-    expect(screen.getByText(/дані будуть оновлені/i)).toBeInTheDocument();
+    // Sources table present, no generation date (DEFAULT_MODEL has no meta.generatedAt)
+    expect(container.querySelector(".foot-src")).toBeTruthy();
+    expect(container.querySelector(".foot-gen")).toBeFalsy();
+  });
+});
+
+describe("Footer — sources table", () => {
+  it("renders all five data-source rows", () => {
+    render(<App />);
+    expect(screen.getByText(/Населення за статтю та віком/i)).toBeInTheDocument();
+    expect(screen.getByText(/Зарплати/i)).toBeInTheDocument();
+    expect(screen.getByText(/Освіта та зайнятість/i)).toBeInTheDocument();
+    expect(screen.getByText(/Зріст, куріння, алкоголь/i)).toBeInTheDocument();
+    expect(screen.getByText(/Служба у ЗСУ/i)).toBeInTheDocument();
+  });
+
+  it("shows hardcoded fallback periods when model lacks meta.periods", async () => {
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(SMALL_MODEL) })
+    );
+    const { container } = render(<App />);
+    await act(async () => {});
+    const tableText = container.querySelector(".foot-src")?.textContent ?? "";
+    expect(tableText).toContain("2022"); // population fallback
+    expect(tableText).toContain("2021"); // education/employment fallback
+    expect(tableText).toContain("2019"); // WHO STEPS (always hardcoded)
+  });
+
+  it("shows actual periods from model.meta.periods when present", async () => {
+    const modelWithPeriods = {
+      ...SMALL_MODEL,
+      meta: {
+        ...SMALL_MODEL.meta,
+        periods: { population: "2023", wages: "2026-M04", education: "2022", employment: "2022" },
+      },
+    };
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(modelWithPeriods) })
+    );
+    const { container } = render(<App />);
+    await act(async () => {});
+    const tableText = container.querySelector(".foot-src")?.textContent ?? "";
+    expect(tableText).toContain("2023");
+    expect(tableText).toContain("2026-M04");
+    expect(tableText).toContain("2022");
+  });
+
+  it("education row falls back to employment period, then to '2021'", async () => {
+    // employment present, no education
+    const withEmployment = {
+      ...SMALL_MODEL,
+      meta: { ...SMALL_MODEL.meta, periods: { employment: "2025" } },
+    };
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(withEmployment) })
+    );
+    const { container: c1 } = render(<App />);
+    await act(async () => {});
+    const rows1 = Array.from(c1.querySelectorAll(".foot-src tr"));
+    const eduRow1 = rows1.find((r) => r.textContent.includes("Освіта"));
+    expect(eduRow1?.textContent).toContain("2025");
+    cleanup();
+
+    // neither education nor employment
+    const neitherPeriod = {
+      ...SMALL_MODEL,
+      meta: { ...SMALL_MODEL.meta, periods: {} },
+    };
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(neitherPeriod) })
+    );
+    const { container: c2 } = render(<App />);
+    await act(async () => {});
+    const rows2 = Array.from(c2.querySelectorAll(".foot-src tr"));
+    const eduRow2 = rows2.find((r) => r.textContent.includes("Освіта"));
+    expect(eduRow2?.textContent).toContain("2021");
+  });
+
+  it("shows .foot-gen date when generatedAt is present, hides it when absent", async () => {
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(SMALL_MODEL) })
+    );
+    const { container: c1 } = render(<App />);
+    await act(async () => {});
+    expect(c1.querySelector(".foot-gen")).toBeTruthy();
+    cleanup();
+
+    const noDate = { ...SMALL_MODEL, meta: {} };
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(noDate) })
+    );
+    const { container: c2 } = render(<App />);
+    await act(async () => {});
+    expect(c2.querySelector(".foot-gen")).toBeFalsy();
   });
 });

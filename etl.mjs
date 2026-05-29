@@ -242,8 +242,9 @@ async function cmdInspect(dfId) {
 
 async function cmdBuild() {
   const blocks = {};
+  const periods = {}; // actual data period per block, e.g. { population: "2022", wages: "2026-M04" }
   const model = {
-    meta: { generatedAt: new Date().toISOString(), apiBase: API, blocks },
+    meta: { generatedAt: new Date().toISOString(), apiBase: API, blocks, periods },
     population:  PLACEHOLDER.population,
     ageBands:    PLACEHOLDER.ageBands,
     education:   PLACEHOLDER.education,
@@ -272,6 +273,7 @@ async function cmdBuild() {
       model.population = patch.population;
       model.ageBands   = patch.ageBands;
       blocks.population = "live";
+      periods.population = patch._time;
       console.log(`  latest year: ${patch._time}, men 18-78: ${patch.population.man.toLocaleString()}`);
     } else {
       blocks.population = "placeholder (extraction failed)";
@@ -291,6 +293,7 @@ async function cmdBuild() {
     if (patch) {
       model.income = patch.income;
       blocks.wages = "live";
+      periods.wages = patch._time;
       console.log(`  latest period: ${patch._time}, men avg: ${Math.exp(patch.income.man.logMean + 0.58 * 0.58 / 2).toFixed(0)} UAH/month`);
     } else {
       blocks.wages = "placeholder (extraction failed)";
@@ -311,6 +314,7 @@ async function cmdBuild() {
     if (eduPatch) {
       model.education = eduPatch.education;
       blocks.education = "live";
+      periods.education = eduPatch._time;
       console.log(`  education: latest period ${eduPatch._time}`);
     } else {
       blocks.education = "placeholder (extraction failed)";
@@ -321,6 +325,7 @@ async function cmdBuild() {
     if (empPatch) {
       model.employment = empPatch.employment;
       blocks.employment = "live";
+      periods.employment = empPatch._time;
       console.log(`  employment: latest period ${empPatch._time}, men base: ${empPatch.employment.man.base}`);
     } else {
       blocks.employment = "placeholder (extraction failed)";
