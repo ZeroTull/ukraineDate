@@ -26,7 +26,7 @@ import {
   decodeSdmxJson,
   latestTime,
   extractPopulation,
-  extractWages,
+  extractWagesEnterprise,
   extractEducation,
   extractEmployment,
 } from "./src/etl-core.js";
@@ -50,8 +50,10 @@ const DATAFLOWS = {
     // Age-specific counts only exist under INDICATOR=PNMI_02 (constant population).
   },
   wages: {
-    id: "DF_SALARY_LEVEL_OF_EMPLOYEES",
-    // Dimensions: INDICATOR, PERIOD_OF_TIME, SEX, REGION, BREAKDOWN_CATEGORY, BREAKDOWN, FREQ
+    id: "DF_ENTERPRISE_LABOR_STATISTICS",
+    // Dimensions: INDICATOR, REGION, BASE, NACE, BREAKDOWN_CATEGORY, BREAKDOWN, FREQ
+    // Monthly data available through the current year (e.g. 2026-M04).
+    // AVG_MTH_SALARY_UAH total gives the wage level; sex ratio comes from quarterly data.
   },
   labourForce: {
     id: "DF_LABOR_FORCE_A",
@@ -250,7 +252,7 @@ async function cmdBuild() {
     behavioral:  MANUAL,
     sources: {
       population:  "State Statistics Service of Ukraine (Derzhstat) — SDMX API, DF_POPULATION_STRUCTURE (2022)",
-      income:      "Derzhstat — DF_SALARY_LEVEL_OF_EMPLOYEES, average monthly salary of full-time employees (2020)",
+      income:      "Derzhstat — DF_ENTERPRISE_LABOR_STATISTICS, average monthly salary of full-time employees (monthly, latest available month)",
       education:   "Derzhstat — DF_LABOR_FORCE_A, Labour Force Survey (2021)",
       employment:  "Derzhstat — DF_LABOR_FORCE_A, Labour Force Survey (2021)",
       behavioral:  "WHO STEPS survey, Ukraine 2019; household surveys",
@@ -280,12 +282,12 @@ async function cmdBuild() {
     console.warn(`  ! ${err.message}\n  Keeping placeholder for population.`);
   }
 
-  // --- Wages (small ~1,500 series; decoded via decodeSdmxJson) ---
+  // --- Wages (enterprise monthly survey; decoded via decodeSdmxJson) ---
   try {
-    console.log(`• wages: fetching ${DATAFLOWS.wages.id} …`);
+    console.log(`• wages: fetching ${DATAFLOWS.wages.id} (~5,000 series) …`);
     const raw = await fetchDataJson(DATAFLOWS.wages.id);
     const obs = decodeSdmxJson(raw);
-    const patch = extractWages(obs);
+    const patch = extractWagesEnterprise(obs);
     if (patch) {
       model.income = patch.income;
       blocks.wages = "live";
