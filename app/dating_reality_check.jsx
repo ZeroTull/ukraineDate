@@ -8,9 +8,47 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from "react"
    Реальні значення підставляються з Держстату (SDMX), ОРС та WHO STEPS 2019.
    ===================================================================== */
 
-// --- дорослого населення, підконтрольна територія — ГРУБА ОЦІНКА ---
-const POP = { man: 11_500_000, woman: 14_800_000 };
 const N = 40_000; // розмір синтетичної вибірки на стать
+
+// Built-in defaults — used until model.json loads (or if it's absent).
+// Values mirror public/model.json placeholders so the app is always runnable.
+const DEFAULT_MODEL = {
+  population: { man: 11_500_000, woman: 14_800_000 },
+  ageBands: [
+    { from: 18, to: 24, man: 0.085, woman: 0.078 },
+    { from: 25, to: 29, man: 0.092, woman: 0.088 },
+    { from: 30, to: 34, man: 0.115, woman: 0.110 },
+    { from: 35, to: 39, man: 0.122, woman: 0.118 },
+    { from: 40, to: 44, man: 0.112, woman: 0.110 },
+    { from: 45, to: 49, man: 0.096, woman: 0.097 },
+    { from: 50, to: 54, man: 0.092, woman: 0.095 },
+    { from: 55, to: 59, man: 0.090, woman: 0.097 },
+    { from: 60, to: 64, man: 0.084, woman: 0.099 },
+    { from: 65, to: 69, man: 0.068, woman: 0.061 },
+    { from: 70, to: 78, man: 0.044, woman: 0.047 },
+  ],
+  education: {
+    man:   [{ from: 18, to: 29, p: 0.46 }, { from: 30, to: 44, p: 0.42 }, { from: 45, to: 78, p: 0.34 }],
+    woman: [{ from: 18, to: 29, p: 0.55 }, { from: 30, to: 44, p: 0.50 }, { from: 45, to: 78, p: 0.40 }],
+  },
+  income: {
+    man:   { logMean: 9.95, sigma: 0.58, higherEdBonus: 0.42, agePeak: 41, ageCurvature: 0.00065 },
+    woman: { logMean: 9.77, sigma: 0.58, higherEdBonus: 0.42, agePeak: 41, ageCurvature: 0.00065 },
+  },
+  employment: {
+    man:   { base: 0.66, youngPenalty: 0.04, oldPenalty: 0.045 },
+    woman: { base: 0.58, youngPenalty: 0.04, oldPenalty: 0.045 },
+  },
+  behavioral: {
+    height:   { man: { mean: 176.0, sd: 7.0 }, woman: { mean: 165.5, sd: 6.2 } },
+    smoking:  { man: 0.503, woman: 0.167, higherEdMultiplier: 0.72 },
+    teetotal: { man: 0.22, woman: 0.42 },
+    kids:     { midAge: 30, steepness: 0.28, manFactor: 0.92, womanFactor: 0.97 },
+    ownsHome: { base: 0.18, ageSlope: 0.011, incomeBonus: 0.08 },
+    hasCar:   { incomeMid: 25000, incomeScale: 22000, manFactor: 1.05, womanFactor: 0.9 },
+    serving:  { manPeakAge: 37, manPeakProb: 0.14, manSpread: 420, womanProb: 0.02 },
+  },
+};
 
 // --- seeded RNG (детерміновано => стабільні результати) ---
 function mulberry32(a) {
@@ -32,70 +70,58 @@ function makeNormal(rng) {
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const logistic = (x) => 1 / (1 + Math.exp(-x));
 
-// вікові частки дорослого населення (орієнтовно, старіша структура)
-const AGE_W = [
-  [18, 24, 0.085], [25, 29, 0.092], [30, 34, 0.115], [35, 39, 0.122],
-  [40, 44, 0.112], [45, 49, 0.096], [50, 54, 0.092], [55, 59, 0.090],
-  [60, 64, 0.084], [65, 69, 0.068], [70, 78, 0.044],
-];
-function sampleAge(rng) {
+function sampleAge(rng, ageBands, gender) {
   let r = rng(), acc = 0;
-  for (const [a, b, w] of AGE_W) {
-    acc += w;
-    if (r <= acc) return a + Math.floor(rng() * (b - a + 1));
+  for (const b of ageBands) {
+    acc += b[gender];
+    if (r <= acc) return b.from + Math.floor(rng() * (b.to - b.from + 1));
   }
   return 45;
 }
 
-// --- генерація однієї людини з кореляціями між ознаками ---
-function makePerson(gender, rng, norm) {
+function makePerson(gender, rng, norm, model) {
   const man = gender === "man";
-  const age = sampleAge(rng);
+  const { behavioral: beh, education: edu, income: inc, employment: emp } = model;
 
-  // зріст: легкий когортний ефект (молодші трохи вищі)
-  const hMean = man ? 176 : 165.5;
-  const hSd = man ? 7.0 : 6.2;
-  const height = clamp(hMean + (40 - age) * 0.045 + norm() * hSd, 140, 210);
+  const age = sampleAge(rng, model.ageBands, gender);
 
-  // вища освіта: молодші частіше
-  let pEd = (man ? 0.42 : 0.5) + (38 - age) * 0.006;
-  const higherEd = rng() < clamp(pEd, 0.1, 0.78);
+  const h = beh.height[gender];
+  const height = clamp(h.mean + (40 - age) * 0.045 + norm() * h.sd, 140, 210);
 
-  // зайнятість
-  let pEmp = (man ? 0.66 : 0.58) - Math.max(0, age - 58) * 0.045 - Math.max(0, 23 - age) * 0.04;
+  const eduBand = edu[gender].find((b) => age >= b.from && age <= b.to) ?? edu[gender].at(-1);
+  const higherEd = rng() < clamp(eduBand.p, 0.1, 0.78);
+
+  const e = emp[gender];
+  const pEmp = e.base - Math.max(0, age - 58) * e.oldPenalty - Math.max(0, 23 - age) * e.youngPenalty;
   const employed = rng() < clamp(pEmp, 0.05, 0.92);
 
-  // дохід (грн/міс): залежить від освіти + віку  => кореляція освіта↔дохід
   let income = rng() * 3000;
   if (employed) {
-    let lm = Math.log(man ? 21000 : 17500);
-    if (higherEd) lm += 0.42;
-    lm += -0.00065 * Math.pow(age - 41, 2);
-    income = Math.exp(lm + norm() * 0.58);
+    const i = inc[gender];
+    let lm = i.logMean + (higherEd ? i.higherEdBonus : 0) - i.ageCurvature * Math.pow(age - i.agePeak, 2);
+    income = Math.exp(lm + norm() * i.sigma);
   }
 
-  // куріння: освічені курять рідше => кореляція освіта↔куріння
-  const smoker = rng() < (man ? 0.5 : 0.17) * (higherEd ? 0.72 : 1);
-  // взагалі не вживає алкоголь
-  const teetotal = rng() < (man ? 0.21 : 0.4);
-  // діти: сильно залежить від віку
-  const hasKids = rng() < logistic((age - 30) * 0.28) * (man ? 0.92 : 0.97);
-  // власне житло
-  const ownsHome = rng() < clamp(0.18 + (age - 22) * 0.011 + (income > 30000 ? 0.08 : 0), 0.05, 0.8);
-  // авто: залежить від доходу => кореляція дохід↔авто
-  const hasCar = rng() < clamp(logistic((income - 25000) / 22000) * (man ? 1.05 : 0.9), 0.04, 0.95);
-  // військова служба — ГРУБА ОЦІНКА, офіційних даних немає
-  let pServe = man && age >= 20 && age <= 55 ? 0.14 * Math.exp(-Math.pow(age - 37, 2) / 420)
-    : (!man && age >= 20 && age <= 50 ? 0.02 : 0);
+  const smoker   = rng() < beh.smoking[gender] * (higherEd ? beh.smoking.higherEdMultiplier : 1);
+  const teetotal = rng() < beh.teetotal[gender];
+  const hasKids  = rng() < logistic((age - beh.kids.midAge) * beh.kids.steepness) * beh.kids[man ? "manFactor" : "womanFactor"];
+  const ownsHome = rng() < clamp(beh.ownsHome.base + (age - 22) * beh.ownsHome.ageSlope + (income > 30000 ? beh.ownsHome.incomeBonus : 0), 0.05, 0.8);
+  const hasCar   = rng() < clamp(logistic((income - beh.hasCar.incomeMid) / beh.hasCar.incomeScale) * beh.hasCar[man ? "manFactor" : "womanFactor"], 0.04, 0.95);
+
+  const sv = beh.serving;
+  const pServe = man && age >= 20 && age <= 55
+    ? sv.manPeakProb * Math.exp(-Math.pow(age - sv.manPeakAge, 2) / sv.manSpread)
+    : (!man && age >= 20 && age <= 50 ? sv.womanProb : 0);
   const serving = rng() < pServe;
 
   return { age, height, higherEd, income, smoker, teetotal, hasKids, ownsHome, hasCar, serving };
 }
-function generatePopulation(gender) {
+
+function generatePopulation(gender, model) {
   const rng = mulberry32(gender === "man" ? 1337 : 8842);
   const norm = makeNormal(rng);
   const arr = new Array(N);
-  for (let i = 0; i < N; i++) arr[i] = makePerson(gender, rng, norm);
+  for (let i = 0; i < N; i++) arr[i] = makePerson(gender, rng, norm, model);
   return arr;
 }
 
@@ -202,8 +228,16 @@ export default function App() {
     nonSmoker: true, nonDrinker: false, noKids: false,
     ownsHome: false, hasCar: true, notServing: false,
   });
+  const [model, setModel] = useState(DEFAULT_MODEL);
 
-  const population = useMemo(() => generatePopulation(gender), [gender]);
+  useEffect(() => {
+    fetch("/model.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then((data) => { if (data?.population && data?.ageBands) setModel(data); });
+  }, []);
+
+  const population = useMemo(() => generatePopulation(gender, model), [gender, model]);
 
   // побудова "лійки": послідовні зрізи однієї популяції => кореляції враховано
   const { rows, fraction, matches } = useMemo(() => {
@@ -229,7 +263,7 @@ export default function App() {
   }, [population, age, height, incomeK, edu, chk]);
 
   const pct = fraction * 100;
-  const absMid = roundSig(fraction * POP[gender], 2);
+  const absMid = roundSig(fraction * model.population[gender], 2);
   const relUnc = Math.sqrt(0.18 * 0.18 + (matches > 0 ? 1 / matches : 1));
   const absLow = roundSig(absMid * (1 - relUnc), 2);
   const absHigh = roundSig(absMid * (1 + relUnc), 2);
@@ -334,7 +368,12 @@ export default function App() {
           </ul>
         </details>
 
-        <footer className="foot">Прототип · дані будуть оновлені офіційними джерелами</footer>
+        <footer className="foot">
+          Прототип
+          {model.meta?.generatedAt
+            ? ` · дані оновлено ${new Date(model.meta.generatedAt).toLocaleDateString("uk-UA")}`
+            : " · дані будуть оновлені офіційними джерелами"}
+        </footer>
       </main>
     </div>
   );
