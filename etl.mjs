@@ -37,7 +37,7 @@ const cacheWrite = (id, data) => _cacheWrite(CACHE_DIR, id, data);
 
 const API = "https://stat.gov.ua/sdmx/workspaces/default:integration/registry/sdmx/2.1";
 const AGENCY = "SSSU";
-const OUT = "model.json";
+const OUT = "public/model.json";
 const LANG = "en"; // "en" or "uk" — language used when printing names
 
 // Dataflows to pull. Replace the TODO_* ids with the real ones you find
