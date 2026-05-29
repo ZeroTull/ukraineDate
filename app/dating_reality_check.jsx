@@ -245,7 +245,7 @@ export default function App() {
   const [model, setModel] = useState(DEFAULT_MODEL);
 
   useEffect(() => {
-    fetch("/model.json")
+    fetch(`${import.meta.env.BASE_URL}model.json`)
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null)
       .then((data) => { if (isValidModel(data)) setModel(data); });
