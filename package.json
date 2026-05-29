@@ -5,11 +5,28 @@
   "type": "module",
   "description": "Demographic dating-market reality check using official Ukrainian statistics (Derzhstat / WHO STEPS).",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "etl:list": "node etl.mjs list",
+    "etl:search": "node etl.mjs search",
     "etl:inspect": "node etl.mjs inspect",
-    "etl:build": "node etl.mjs build"
+    "etl:build": "node etl.mjs build",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "fast-xml-parser": "^4.5.0"
+    "fast-xml-parser": "^4.5.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/coverage-v8": "^4.1.7",
+    "jsdom": "^29.1.1",
+    "vite": "^8.0.14",
+    "vitest": "^4.1.7"
   }
 }

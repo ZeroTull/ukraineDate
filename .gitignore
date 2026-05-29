@@ -4,6 +4,9 @@ node_modules/
 # generated data bundle (produced by `node etl.mjs build`)
 model.json
 
+# cached raw API responses (kept locally to survive API downtime)
+.etl-cache/
+
 # build output
 dist/
 

@@ -27,6 +27,11 @@
 
 import { writeFileSync } from "node:fs";
 import { XMLParser } from "fast-xml-parser";
+import { cacheRead as _cacheRead, cacheWrite as _cacheWrite, decodeSdmxJson } from "./src/etl-core.js";
+
+const CACHE_DIR = ".etl-cache";
+const cacheRead  = (id)       => _cacheRead(CACHE_DIR, id);
+const cacheWrite = (id, data) => _cacheWrite(CACHE_DIR, id, data);
 
 /* ----------------------------- CONFIG ----------------------------- */
 
@@ -137,6 +142,42 @@ async function getXml(url, accept = "application/vnd.sdmx.structure+xml;version=
   return xml.parse(await res.text());
 }
 
+// The Derzhstat data endpoint only responds to SDMX-JSON; generic/compact XML return 500.
+// SDMX-JSON encodes series keys as colon-separated dimension-value indices ("0:1:2:0:0:0").
+// This helper fetches data + its embedded structure, then returns observations as flat objects:
+//   { key: { DIM_ID: "CODE_VALUE", ... }, time: "YYYY", value: number }
+async function fetchObservationsSdmxJson(cfg, retries = 3) {
+  const url = `${API}/data/${cfg.id}/all/${AGENCY}`;
+  let data = null;
+  let lastErr;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    if (attempt > 1) await new Promise((r) => setTimeout(r, 4000 * attempt));
+    const res = await fetch(url, {
+      headers: { Accept: "application/vnd.sdmx.data+json;version=1.0" },
+      signal: AbortSignal.timeout(25000),
+    }).catch((e) => { lastErr = e; return null; });
+    if (!res?.ok) { lastErr = lastErr ?? new Error(`HTTP ${res?.status} (attempt ${attempt})`); continue; }
+    const parsed = JSON.parse(await res.text());
+    if (!parsed.dataSets) { lastErr = new Error("No dataSets in response"); continue; }
+    data = parsed;
+    cacheWrite(cfg.id, data);
+    break;
+  }
+
+  if (!data) {
+    const cached = cacheRead(cfg.id);
+    if (cached) {
+      console.warn(`  API unavailable (${lastErr?.message}) — using cached response for ${cfg.id}`);
+      data = cached;
+    } else {
+      throw lastErr ?? new Error(`fetchObservationsSdmxJson failed for ${cfg.id}`);
+    }
+  }
+
+  return decodeSdmxJson(data);
+}
+
 /* ------------------------- command: list --------------------------- */
 
 async function cmdList(filter) {
@@ -185,26 +226,37 @@ async function cmdInspect(dfId) {
   }
   const td = dsd?.DataStructureComponents?.DimensionList?.TimeDimension;
   if (td) console.log(`  • ${td["@id"]} (time)`);
+
+  // Attempt a live data fetch to show actual dimension values (the DSD lacks codelists)
+  console.log("\nFetching sample data to discover actual dimension codes (this may take a few seconds)…");
+  try {
+    const url = `${API}/data/${dfId}/all/${AGENCY}`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/vnd.sdmx.data+json;version=1.0" },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = JSON.parse(await res.text());
+    const seriesDims = data.structure?.dimensions?.series ?? [];
+    if (seriesDims.length) {
+      console.log("\nActual dimension codes (from live data):");
+      for (const d of seriesDims) {
+        const vals = (d.values ?? []).map((v) => `${v.id ?? v} = ${v.name ?? ""}`).join("\n        ");
+        console.log(`  • ${d.id}\n        ${vals}`);
+      }
+    } else {
+      console.log("  (structure not embedded in response — dimension codes unknown)");
+    }
+  } catch (e) {
+    console.log(`  (data fetch failed: ${e.message})`);
+  }
   console.log("\nUse the dimension ids + codes above to fill DATAFLOWS in this file.");
 }
 
 /* ------------------------- command: build --------------------------- */
 
 async function fetchObservations(cfg) {
-  // Generic-data format gives a predictable Series/Obs shape.
-  const url = `${API}/data/${cfg.id}/${cfg.key}/${AGENCY}`;
-  const doc = await getXml(url, "application/vnd.sdmx.genericdata+xml;version=2.1");
-  const out = [];
-  for (const ds of arr(doc?.GenericData?.DataSet)) {
-    for (const s of arr(ds.Series)) {
-      const key = {};
-      for (const v of arr(s?.SeriesKey?.Value)) key[v["@id"]] = v["@value"];
-      for (const o of arr(s.Obs)) {
-        out.push({ key, time: o?.ObsDimension?.["@value"], value: Number(o?.ObsValue?.["@value"]) });
-      }
-    }
-  }
-  return out;
+  return fetchObservationsSdmxJson(cfg);
 }
 
 const latestTime = (obs) => obs.map((o) => o.time).sort().slice(-1)[0];
