@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   cacheRead, cacheWrite, decodeSdmxJson,
   latestTime,
-  extractPopulation, extractWages, extractEducation, extractEmployment,
+  extractPopulation, extractWages, extractWagesEnterprise, extractEducation, extractEmployment,
 } from "./etl-core.js";
 
 // ---- cache helpers ----
@@ -280,6 +280,97 @@ describe("extractWages", () => {
     const result = extractWages([{ key: { PERIOD_OF_TIME: "HOUR" }, time: "2020", value: 50 }]);
     expect(result).toBeNull();
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no observations matched"));
+    warnSpy.mockRestore();
+  });
+});
+
+// ---- extractWagesEnterprise ----
+
+const UA = "UA00000000000000000";
+const MOCK_ENT_OBS = [
+  // Monthly total (FREQ=M, BREAKDOWN=_T)
+  { key: { INDICATOR: "AVG_MTH_SALARY_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "_T", FREQ: "M" }, time: "2026-M04", value: 29297 },
+  { key: { INDICATOR: "AVG_MTH_SALARY_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "_T", FREQ: "M" }, time: "2026-M03", value: 28885 },
+  // Quarterly sex breakdown
+  { key: { INDICATOR: "AVG_MTH_SALARY_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "M",  FREQ: "Q" }, time: "2025-Q4", value: 33202 },
+  { key: { INDICATOR: "AVG_MTH_SALARY_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "F",  FREQ: "Q" }, time: "2025-Q4", value: 24399 },
+  { key: { INDICATOR: "AVG_MTH_SALARY_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "_T", FREQ: "Q" }, time: "2025-Q4", value: 28337 },
+  // Annual sex breakdown (should not be used when quarterly exists)
+  { key: { INDICATOR: "AVG_MTH_SALARY_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "M",  FREQ: "A" }, time: "2025", value: 30593 },
+  { key: { INDICATOR: "AVG_MTH_SALARY_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "F",  FREQ: "A" }, time: "2025", value: 22223 },
+  { key: { INDICATOR: "AVG_MTH_SALARY_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "_T", FREQ: "A" }, time: "2025", value: 25946 },
+  // Unrelated series that should be ignored
+  { key: { INDICATOR: "AVG_SALARY_HRS_UAH", REGION: UA, NACE: "_T", BREAKDOWN_CATEGORY: "SEX", BREAKDOWN: "_T", FREQ: "M" }, time: "2026-M04", value: 175 },
+];
+
+describe("extractWagesEnterprise", () => {
+  it("uses latest monthly total as wage level baseline", () => {
+    const result = extractWagesEnterprise(MOCK_ENT_OBS);
+    expect(result).not.toBeNull();
+    expect(result._time).toBe("2026-M04");
+  });
+
+  it("applies quarterly sex ratio to monthly total", () => {
+    const sigma = 0.58;
+    const result = extractWagesEnterprise(MOCK_ENT_OBS, sigma);
+    // Sex ratio from Q4 2025: maleRatio = 33202/28337, femaleRatio = 24399/28337
+    const maleRatio   = 33202 / 28337;
+    const femaleRatio = 24399 / 28337;
+    const manSalary   = 29297 * maleRatio;
+    const womanSalary = 29297 * femaleRatio;
+    expect(result.income.man.logMean).toBeCloseTo(Math.log(manSalary) - sigma * sigma / 2, 3);
+    expect(result.income.woman.logMean).toBeCloseTo(Math.log(womanSalary) - sigma * sigma / 2, 3);
+  });
+
+  it("falls back to annual sex ratio when quarterly is absent", () => {
+    const noQuarterly = MOCK_ENT_OBS.filter((o) => o.key.FREQ !== "Q");
+    const result = extractWagesEnterprise(noQuarterly);
+    expect(result).not.toBeNull();
+    const annualRatioM = 30593 / 25946;
+    const manSalary    = 29297 * annualRatioM;
+    expect(result.income.man.logMean).toBeCloseTo(Math.log(manSalary) - 0.58 * 0.58 / 2, 3);
+  });
+
+  it("uses hardcoded higherEdBonus of 0.333", () => {
+    const result = extractWagesEnterprise(MOCK_ENT_OBS);
+    expect(result.income.man.higherEdBonus).toBe(0.333);
+    expect(result.income.woman.higherEdBonus).toBe(0.333);
+  });
+
+  it("uses sigma passed as parameter", () => {
+    const result = extractWagesEnterprise(MOCK_ENT_OBS, 0.5);
+    expect(result.income.man.sigma).toBe(0.5);
+  });
+
+  it("returns null and warns when no monthly total observations are found", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const noMonthly = MOCK_ENT_OBS.filter((o) => o.key.FREQ !== "M");
+    const result = extractWagesEnterprise(noMonthly);
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no monthly total observations found"));
+    warnSpy.mockRestore();
+  });
+
+  it("returns null and warns when monthly total value is undefined", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const missingValue = MOCK_ENT_OBS.map((o) => ({
+      ...o,
+      value: o.key.FREQ === "M" && o.key.BREAKDOWN === "_T" ? undefined : o.value,
+    }));
+    const result = extractWagesEnterprise(missingValue);
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("monthly total salary is missing or invalid"));
+    warnSpy.mockRestore();
+  });
+
+  it("returns null and warns when sex ratio cannot be derived", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const noSexBreakdown = MOCK_ENT_OBS.filter(
+      (o) => o.key.FREQ === "M" || (o.key.FREQ !== "Q" && o.key.FREQ !== "A"),
+    );
+    const result = extractWagesEnterprise(noSexBreakdown);
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("could not derive male/female salary ratio"));
     warnSpy.mockRestore();
   });
 });

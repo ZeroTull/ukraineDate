@@ -184,7 +184,7 @@ export function extractPopulation(raw) {
 }
 
 /* =======================================================================
-   DF_SALARY_LEVEL_OF_EMPLOYEES extractor
+   DF_SALARY_LEVEL_OF_EMPLOYEES extractor (4-year Labour Cost Survey).
    Expects decoded obs from decodeSdmxJson.
    Returns { income, _time } or null on failure.
    ======================================================================= */
@@ -247,6 +247,92 @@ export function extractWages(obs, sigmaOverride = 0.58) {
       woman: { logMean: +logMeanWoman.toFixed(4), sigma, higherEdBonus, agePeak: 41, ageCurvature: 0.00065 },
     },
     _time: t,
+  };
+}
+
+/* =======================================================================
+   DF_ENTERPRISE_LABOR_STATISTICS extractor (monthly enterprise survey).
+   Has data through the current year (e.g. 2026-M04).
+   Dimensions: INDICATOR, REGION, BASE, NACE, BREAKDOWN_CATEGORY,
+               BREAKDOWN, FREQ.
+
+   Strategy: take the latest monthly total (FREQ=M, BREAKDOWN=_T) for
+   all Ukraine / all sectors (NACE=_T) as the wage level baseline, then
+   apply the sex ratio from the most recent quarterly breakdown to produce
+   sex-specific estimates.  The higherEdBonus of 0.333 is calibrated from
+   the 2020 Labour Cost Survey and carried forward unchanged — no education
+   breakdown exists in this dataflow.
+
+   Returns { income, _time } or null on failure.
+   ======================================================================= */
+export function extractWagesEnterprise(obs, sigmaOverride = 0.58) {
+  const UA = "UA00000000000000000";
+
+  // Latest monthly total: all Ukraine, all sectors, SEX breakdown category, total sex
+  const mthTotalObs = obs.filter(
+    (o) =>
+      o.key.INDICATOR          === "AVG_MTH_SALARY_UAH" &&
+      o.key.REGION             === UA &&
+      o.key.NACE               === "_T" &&
+      o.key.BREAKDOWN_CATEGORY === "SEX" &&
+      o.key.BREAKDOWN          === "_T" &&
+      o.key.FREQ               === "M",
+  );
+  const latestMonth = latestTime(mthTotalObs);
+  if (!latestMonth) {
+    console.warn(
+      "extractWagesEnterprise: no monthly total observations found. " +
+      `Found INDICATOR values: ${[...new Set(obs.map((o) => o.key.INDICATOR))].join(", ")}`,
+    );
+    return null;
+  }
+  const totalSalary = mthTotalObs.find((o) => o.time === latestMonth)?.value;
+  if (!totalSalary || totalSalary <= 0) {
+    console.warn("extractWagesEnterprise: monthly total salary is missing or invalid");
+    return null;
+  }
+
+  // Sex ratio from the most recent quarterly breakdown (more recent than annual)
+  const sexRatioObs = (freq) =>
+    obs.filter(
+      (o) =>
+        o.key.INDICATOR          === "AVG_MTH_SALARY_UAH" &&
+        o.key.REGION             === UA &&
+        o.key.NACE               === "_T" &&
+        o.key.BREAKDOWN_CATEGORY === "SEX" &&
+        (o.key.BREAKDOWN === "M" || o.key.BREAKDOWN === "F" || o.key.BREAKDOWN === "_T") &&
+        o.key.FREQ               === freq,
+    );
+
+  const deriveSexRatio = (pool) => {
+    const t = latestTime(pool);
+    if (!t) return null;
+    const cur    = pool.filter((o) => o.time === t);
+    const qTotal = cur.find((o) => o.key.BREAKDOWN === "_T")?.value;
+    const qMale  = cur.find((o) => o.key.BREAKDOWN === "M")?.value;
+    const qFem   = cur.find((o) => o.key.BREAKDOWN === "F")?.value;
+    if (!qTotal || !qMale || !qFem) return null;
+    return { male: qMale / qTotal, female: qFem / qTotal, ratioTime: t };
+  };
+
+  const ratio = deriveSexRatio(sexRatioObs("Q")) ?? deriveSexRatio(sexRatioObs("A"));
+  if (!ratio) {
+    console.warn("extractWagesEnterprise: could not derive male/female salary ratio from quarterly or annual data");
+    return null;
+  }
+
+  const manSalary   = totalSalary * ratio.male;
+  const womanSalary = totalSalary * ratio.female;
+  const sigma = sigmaOverride;
+  // higherEdBonus: calibrated from 2020 Labour Cost Survey (DF_SALARY_LEVEL_OF_EMPLOYEES)
+  const higherEdBonus = 0.333;
+
+  return {
+    income: {
+      man:   { logMean: +(Math.log(manSalary)   - (sigma * sigma) / 2).toFixed(4), sigma, higherEdBonus, agePeak: 41, ageCurvature: 0.00065 },
+      woman: { logMean: +(Math.log(womanSalary) - (sigma * sigma) / 2).toFixed(4), sigma, higherEdBonus, agePeak: 41, ageCurvature: 0.00065 },
+    },
+    _time: latestMonth,
   };
 }
 
