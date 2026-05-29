@@ -287,6 +287,10 @@ export function extractWagesEnterprise(obs, sigmaOverride = 0.58) {
     return null;
   }
   const totalSalary = mthTotalObs.find((o) => o.time === latestMonth)?.value;
+  if (!totalSalary || totalSalary <= 0) {
+    console.warn("extractWagesEnterprise: monthly total salary is missing or invalid");
+    return null;
+  }
 
   // Sex ratio from the most recent quarterly breakdown (more recent than annual)
   const sexRatioObs = (freq) =>

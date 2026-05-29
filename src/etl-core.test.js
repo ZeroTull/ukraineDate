@@ -351,6 +351,18 @@ describe("extractWagesEnterprise", () => {
     warnSpy.mockRestore();
   });
 
+  it("returns null and warns when monthly total value is undefined", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const missingValue = MOCK_ENT_OBS.map((o) => ({
+      ...o,
+      value: o.key.FREQ === "M" && o.key.BREAKDOWN === "_T" ? undefined : o.value,
+    }));
+    const result = extractWagesEnterprise(missingValue);
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("monthly total salary is missing or invalid"));
+    warnSpy.mockRestore();
+  });
+
   it("returns null and warns when sex ratio cannot be derived", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const noSexBreakdown = MOCK_ENT_OBS.filter(
