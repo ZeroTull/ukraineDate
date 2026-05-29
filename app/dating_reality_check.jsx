@@ -85,11 +85,12 @@ function makePerson(gender, rng, norm, model) {
 
   const age = sampleAge(rng, model.ageBands, gender);
 
-  const h = beh.height[gender];
+  const h = beh.height?.[gender] ?? DEFAULT_MODEL.behavioral.height[gender];
   const height = clamp(h.mean + (40 - age) * 0.045 + norm() * h.sd, 140, 210);
 
-  const eduBand = edu[gender].find((b) => age >= b.from && age <= b.to) ?? edu[gender].at(-1);
-  const higherEd = rng() < clamp(eduBand.p, 0.1, 0.78);
+  const eduArr = edu[gender] ?? DEFAULT_MODEL.education[gender];
+  const eduBand = eduArr.find((b) => age >= b.from && age <= b.to) ?? eduArr.at(-1);
+  const higherEd = rng() < clamp(eduBand?.p ?? 0.5, 0.1, 0.78);
 
   const e = emp[gender];
   const pEmp = e.base - Math.max(0, age - 58) * e.oldPenalty - Math.max(0, 23 - age) * e.youngPenalty;
@@ -123,6 +124,19 @@ function generatePopulation(gender, model) {
   const arr = new Array(N);
   for (let i = 0; i < N; i++) arr[i] = makePerson(gender, rng, norm, model);
   return arr;
+}
+
+function isValidModel(m) {
+  if (!m || typeof m !== "object") return false;
+  if (!["population", "ageBands", "education", "income", "employment", "behavioral"].every((k) => k in m)) return false;
+  if (!Array.isArray(m.ageBands) || m.ageBands.length === 0) return false;
+  if (!m.ageBands.every((b) => "from" in b && "to" in b && "man" in b && "woman" in b)) return false;
+  if (!["man", "woman"].every((g) => Array.isArray(m.education?.[g]) && m.education[g].length > 0)) return false;
+  if (!["man", "woman"].every((g) => m.income?.[g]?.logMean != null)) return false;
+  if (!["man", "woman"].every((g) => m.employment?.[g]?.base != null)) return false;
+  const bKeys = ["height", "smoking", "teetotal", "kids", "ownsHome", "hasCar", "serving"];
+  if (!bKeys.every((k) => k in (m.behavioral ?? {}))) return false;
+  return true;
 }
 
 // --- форматери ---
@@ -234,7 +248,7 @@ export default function App() {
     fetch("/model.json")
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null)
-      .then((data) => { if (data?.population && data?.ageBands) setModel(data); });
+      .then((data) => { if (isValidModel(data)) setModel(data); });
   }, []);
 
   const population = useMemo(() => generatePopulation(gender, model), [gender, model]);
