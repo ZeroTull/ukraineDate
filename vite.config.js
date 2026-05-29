@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   root: ".",
   publicDir: "public",
+  base: process.env.GITHUB_ACTIONS ? "/ukraineDate/" : "/",
   build: {
     outDir: "dist",
     emptyOutDir: true,
